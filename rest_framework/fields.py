@@ -35,7 +35,7 @@ from rest_framework.compat import (
     InvalidTimeError, MaxLengthValidator, MaxValueValidator,
     MinLengthValidator, MinValueValidator, unicode_repr, unicode_to_repr
 )
-from rest_framework.exceptions import ErrorDetail, ValidationError
+from rest_framework.exceptions import ErrorDetail, ValidationError as RestValidationError
 from rest_framework.settings import api_settings
 from rest_framework.utils import html, humanize_datetime, json, representation
 
@@ -536,7 +536,7 @@ class Field(object):
 
             try:
                 validator(value)
-            except ValidationError as exc:
+            except RestValidationError as exc:
                 # If the validation error contains a mapping of fields to
                 # errors then simply raise it immediately rather than
                 # attempting to accumulate a list of errors.
@@ -546,7 +546,7 @@ class Field(object):
             except DjangoValidationError as exc:
                 errors.extend(get_error_detail(exc))
         if errors:
-            raise ValidationError(errors)
+            raise RestValidationError(errors)
 
     def to_internal_value(self, data):
         """
@@ -582,7 +582,7 @@ class Field(object):
             msg = MISSING_ERROR_MESSAGE.format(class_name=class_name, key=key)
             raise AssertionError(msg)
         message_string = msg.format(**kwargs)
-        raise ValidationError(message_string, code=key)
+        raise RestValidationError(message_string, code=key)
 
     @property
     def root(self):
@@ -1572,6 +1572,7 @@ class _UnvalidatedField(Field):
         return value
 
 
+
 class ListField(Field):
     child = _UnvalidatedField()
     initial = []
@@ -1627,7 +1628,17 @@ class ListField(Field):
             self.fail('not_a_list', input_type=type(data).__name__)
         if not self.allow_empty and len(data) == 0:
             self.fail('empty')
-        return self.run_child_validation(data)
+        errors = []
+        items = []
+        for item in data:
+            try:
+                items.append(self.child.run_validation(item))
+            except RestValidationError as err:
+                errors.extend(err.detail)
+        if errors:
+            raise RestValidationError(errors)
+        else:
+            return items
 
     def to_representation(self, data):
         """
@@ -1642,12 +1653,12 @@ class ListField(Field):
         for idx, item in enumerate(data):
             try:
                 result.append(self.child.run_validation(item))
-            except ValidationError as e:
+            except RestValidationError as e:
                 errors[idx] = e.detail
 
         if not errors:
             return result
-        raise ValidationError(errors)
+        raise RestValidationError(errors)
 
 
 class DictField(Field):
@@ -1704,12 +1715,12 @@ class DictField(Field):
 
             try:
                 result[key] = self.child.run_validation(value)
-            except ValidationError as e:
+            except RestValidationError as e:
                 errors[key] = e.detail
 
         if not errors:
             return result
-        raise ValidationError(errors)
+        raise RestValidationError(errors)
 
 
 class HStoreField(DictField):
